@@ -5,6 +5,7 @@ Clone existing repository
 
 Add submodule js-rpcapi 
 <pre><code>git submodule add https://github.com/mineplexio/js-rpcapi.git</code></pre>
+<pre><code>git submodule update --remote</code></pre>
 
 Install dependencies to js-rpcapi
 <pre><code>cd js-rpcapi; npm install; cd ../</code></pre>
