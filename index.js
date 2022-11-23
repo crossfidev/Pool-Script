@@ -308,10 +308,6 @@ const handleBlock = async (block, nextBlock) => {
   });
 }
 
-const runPaymentScript = () => {
-
-}
-
 mongoose.connect(config.MONGO_URL, { useNewUrlParser: true, useUnifiedTopology: true, useFindAndModify: false }, async (error) => {
   if (error) throw error;
 
@@ -338,7 +334,7 @@ mongoose.connect(config.MONGO_URL, { useNewUrlParser: true, useUnifiedTopology: 
         const nextBlock = await getBlock(level + 1);
         const cycleInfo = await getCycleInfo(block.metadata.level.cycle);
         console.log(`Current level is ${level}, block hash is ${block.hash}`);    
-        const startTime = new Date().getTime();
+        let startTime = new Date().getTime();
         await handleBlock(block, nextBlock);
         const endTime = new Date().getTime();
         console.log(`End of block handling. Run time: ${endTime - startTime}`);
@@ -349,6 +345,13 @@ mongoose.connect(config.MONGO_URL, { useNewUrlParser: true, useUnifiedTopology: 
         }, {
           upsert: true
         });
+
+        console.log(`Start cleaning old cycles lower than: ${level - BLOCKS_IN_CYCLE * 60}`);
+        startTime = new Date().getTime();
+        await Reward.deleteMany({
+          level: { $lt: level - BLOCKS_IN_CYCLE * 60 },
+        });
+        console.log(`End cleaning old cycles. Run time: ${new Date().getTime() - startTime}`);
 
         if (config.PAYMENT_SCRIPT.ENABLED_AUTOPAYMENT) {
           if (level === cycleInfo.first + lodash.max([5, config.PAYMENT_SCRIPT.AUTOPAYMENT_LEVEL])) {

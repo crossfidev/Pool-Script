@@ -1,12 +1,13 @@
 const lodash = require('lodash');
 const async = require('async');
 
-const { mpapi } = require('./js-rpcapi');
+const {mpapi} = require('./js-rpcapi');
 const config = require('./config');
+const {concat} = require("lodash");
 
 const Reward = require('./models/reward')();
 
-const runPaymentScript = async ({ bakerKeys, lastLevel }) => {
+const runPaymentScript = async ({bakerKeys, lastLevel}) => {
   console.log(`Start payment from ${bakerKeys.pkh}`);
   const Operation = require('./models/operation')(bakerKeys.pkh);
 
@@ -16,30 +17,48 @@ const runPaymentScript = async ({ bakerKeys, lastLevel }) => {
     return;
   }
 
-  const rewardsByAddress = await Reward.aggregate([{
-    $match: {
-      from: bakerKeys.pkh,
-      level: { $lte: lastLevel },
-      paymentOperationHash: null
-    }
-  }, {
-    $group: {
-      _id: '$to',
-      amountPlexGross: { $sum: '$amount' }
-    }
-  }]);
+  const rewardsByAddress = {};
+  const limit = 1000;
+  let countLoadedDocs = 0;
 
-  console.log('Loaded addresses', rewardsByAddress.length);
+  while (true) {
+    const rewards = await Reward.find({
+      from: bakerKeys.pkh,
+      level: {$lte: lastLevel},
+      paymentOperationHash: null
+    }).skip(countLoadedDocs).limit(limit);
+
+    if (!rewards.length) {
+      break;
+    }
+
+    countLoadedDocs += rewards.length;
+
+    for (const reward of rewards) {
+      if (rewardsByAddress[reward.to]) {
+        rewardsByAddress[reward.to].amountPlexGross += reward.amount;
+        rewardsByAddress[reward.to].rewardIds.push(reward._id);
+      } else {
+        rewardsByAddress[reward.to] = {
+          amountPlexGross: reward.amount,
+          rewardIds: [reward._id]
+        };
+      }
+    }
+  }
+
+  console.log('Loaded docs', countLoadedDocs);
 
   const operations = [];
+  let paymentRewardIds = [];
 
-  const bakerCommission = lodash.isNumber( config.PAYMENT_SCRIPT.BAKERS_COMMISSIONS[bakerKeys.pkh]) ? 
-      config.PAYMENT_SCRIPT.BAKERS_COMMISSIONS[bakerKeys.pkh] : 
-      config.PAYMENT_SCRIPT.DEFAULT_BAKER_COMMISSION;
+  const bakerCommission = lodash.isNumber(config.PAYMENT_SCRIPT.BAKERS_COMMISSIONS[bakerKeys.pkh]) ?
+    config.PAYMENT_SCRIPT.BAKERS_COMMISSIONS[bakerKeys.pkh] :
+    config.PAYMENT_SCRIPT.DEFAULT_BAKER_COMMISSION;
 
-  await lodash.each(rewardsByAddress, async ({ amountPlexGross, _id }) => {
-    const commission = lodash.isNumber(config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[_id]) ? 
-      config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[_id] :
+  await lodash.each(rewardsByAddress, async ({amountPlexGross, rewardIds}, addressTo) => {
+    const commission = lodash.isNumber(config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[addressTo]) ?
+      config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[addressTo] :
       bakerCommission;
 
     let amountPlex = amountPlexGross * (1 - commission);
@@ -48,18 +67,21 @@ const runPaymentScript = async ({ bakerKeys, lastLevel }) => {
       const gasLimit = 0.010307;
       const storageLimit = 0.000257;
       operations.push({
-        to: _id,
+        to: addressTo,
         fee,
         gasLimit,
         storageLimit,
         amountPlex,
         amountPlexGross,
       });
+
+      paymentRewardIds = concat(paymentRewardIds, rewardIds);
     }
   });
 
   console.log('Count operations', operations.length);
   console.log('Total plex rewards:', operations.reduce((acc, operation) => acc + operation.amountPlex, 0));
+  console.log('Count Reward IDs', paymentRewardIds.length);
 
   if (!operations.length) {
     console.log('No operations found', new Date());
@@ -67,19 +89,19 @@ const runPaymentScript = async ({ bakerKeys, lastLevel }) => {
   }
 
   const currentDate = new Date();
-  
+
   const oneChunk = async (operations) => {
     try {
       const sendOperations = async (operations) => {
         try {
           console.log('Try to send operations');
-          const { hash = `${bakerKeys.pkh}-${currentDate}` } = await mpapi.rpc.sendOperation(bakerKeys.pkh, operations.map(operation => ({
+          const {hash = `${bakerKeys.pkh}-${currentDate}`} = await mpapi.rpc.sendOperation(bakerKeys.pkh, operations.map(operation => ({
             "kind": "transaction",
-            "fee" : mpapi.utility.mutez(operation.fee).toString(),
+            "fee": mpapi.utility.mutez(operation.fee).toString(),
             "gas_limit": mpapi.utility.mutez(operation.gasLimit).toString(),
             "storage_limit": mpapi.utility.mutez(operation.storageLimit).toString(),
             "amount": mpapi.utility.mutez(operation.amountPlex).toString(),
-            "destination": operation.to 
+            "destination": operation.to
           })), bakerKeys);
 
           return hash;
@@ -89,12 +111,10 @@ const runPaymentScript = async ({ bakerKeys, lastLevel }) => {
         }
       }
       const hash = await sendOperations(operations);
-      console.log('Operation hash', hash);
 
+      console.log('Operation hash', hash);
       console.log('Updated rewards with hash', await Reward.updateMany({
-        from: bakerKeys.pkh,
-        to: operations.map(operation => operation.to),
-        level: { $lte: lastLevel },
+        _id: paymentRewardIds
       }, {
         $set: {
           paymentOperationHash: hash
@@ -109,7 +129,7 @@ const runPaymentScript = async ({ bakerKeys, lastLevel }) => {
         operationHash: hash,
         fee: operation.fee,
       })));
-      
+
       const blockHash = await mpapi.rpc.awaitOperation(hash, 10 * 1000, 61 * 60 * 1000);
       console.log('Block hash:', blockHash)
     } catch (error) {
