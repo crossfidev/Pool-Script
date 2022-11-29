@@ -17,36 +17,34 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
     return;
   }
 
+  const stream = Reward.find({
+    from: bakerKeys.pkh,
+    level: {$lte: lastLevel},
+    paymentOperationHash: null
+  }).cursor();
+
   const rewardsByAddress = {};
-  const limit = 1000;
+  let i = 0;
   let countLoadedDocs = 0;
+  for (let doc = await stream.next(); doc != null; doc = await stream.next()) {
+    i++;
+    countLoadedDocs++;
 
-  while (true) {
-    const rewards = await Reward.find({
-      from: bakerKeys.pkh,
-      level: {$lte: lastLevel},
-      paymentOperationHash: null
-    }).skip(countLoadedDocs).limit(limit);
-
-    if (!rewards.length) {
-      break;
+    if (i > 1000) {
+      console.log('Loaded docs', countLoadedDocs);
+      i = 0;
     }
 
-    countLoadedDocs += rewards.length;
-
-    for (const reward of rewards) {
-      if (rewardsByAddress[reward.to]) {
-        rewardsByAddress[reward.to].amountPlexGross += reward.amount;
-        rewardsByAddress[reward.to].rewardIds.push(reward._id);
-      } else {
-        rewardsByAddress[reward.to] = {
-          amountPlexGross: reward.amount,
-          rewardIds: [reward._id]
-        };
-      }
+    if (rewardsByAddress[doc.to]) {
+      rewardsByAddress[doc.to].amountPlexGross += doc.amount;
+      rewardsByAddress[doc.to].rewardIds.push(doc._id);
+    } else {
+      rewardsByAddress[doc.to] = {
+        amountPlexGross: doc.amount,
+        rewardIds: [doc._id]
+      };
     }
   }
-
   console.log('Loaded docs', countLoadedDocs);
 
   const operations = [];
