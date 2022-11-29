@@ -17,8 +17,6 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
     return;
   }
 
-  let limitBreak = false
-
   const stream = Reward.find({
     from: bakerKeys.pkh,
     level: {$lte: lastLevel},
@@ -44,11 +42,6 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
         amountPlexGross: doc.amount,
         rewardIds: [doc._id]
       };
-    }
-
-    if (countLoadedDocs >= 4000000) {
-      limitBreak = true;
-      break;
     }
   }
 
@@ -148,10 +141,6 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
   await async.eachLimit(chunkedOperations, 1, async (operations) => {
     await oneChunk(operations);
   });
-
-  if (limitBreak) {
-    await runPaymentScript({bakerKeys, lastLevel})
-  }
 };
 
 module.exports = {
