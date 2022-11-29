@@ -46,7 +46,7 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
       };
     }
 
-    if (countLoadedDocs > 5000000) {
+    if (countLoadedDocs > 1000000) {
       limitBreak = true;
       break;
     }
