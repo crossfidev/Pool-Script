@@ -26,15 +26,14 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
   }).cursor();
 
   const rewardsByAddress = {};
-  let i = 0;
+
   let countLoadedDocs = 0;
+
   for (let doc = await stream.next(); doc != null; doc = await stream.next()) {
-    i++;
     countLoadedDocs++;
 
-    if (i > 1000) {
+    if (countLoadedDocs % 1000 === 0 ) {
       console.log('Loaded docs', countLoadedDocs);
-      i = 0;
     }
 
     if (rewardsByAddress[doc.to]) {
