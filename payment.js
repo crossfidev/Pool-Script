@@ -46,7 +46,7 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
       };
     }
 
-    if (countLoadedDocs > 1000000) {
+    if (countLoadedDocs >= 1000000) {
       limitBreak = true;
       break;
     }
@@ -78,6 +78,7 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
         storageLimit,
         amountPlex,
         amountPlexGross,
+        rewardIds
       });
 
       paymentRewardIds = concat(paymentRewardIds, rewardIds);
@@ -119,7 +120,7 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
 
       console.log('Operation hash', hash);
       console.log('Updated rewards with hash', await Reward.updateMany({
-        _id: {$in: paymentRewardIds}
+        _id: {$in: lodash.flatMapDeep(operations, 'rewardIds')}
       }, {
         $set: {
           paymentOperationHash: hash
