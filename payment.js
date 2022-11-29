@@ -122,7 +122,7 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
 
       console.log('Operation hash', hash);
       console.log('Updated rewards with hash', await Reward.updateMany({
-        _id: paymentRewardIds
+        _id: {$in: paymentRewardIds}
       }, {
         $set: {
           paymentOperationHash: hash
