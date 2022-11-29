@@ -35,6 +35,8 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
 
     countLoadedDocs += rewards.length;
 
+    console.log('Loaded docs', countLoadedDocs);
+
     for (const reward of rewards) {
       if (rewardsByAddress[reward.to]) {
         rewardsByAddress[reward.to].amountPlexGross += reward.amount;
@@ -53,7 +55,7 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
     }
   }
 
-  console.log('Loaded docs', countLoadedDocs);
+  console.log('Total loaded docs', countLoadedDocs);
 
   const operations = [];
   let paymentRewardIds = [];
