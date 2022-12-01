@@ -1,9 +1,7 @@
 const lodash = require('lodash');
-const async = require('async');
 
 const {mpapi} = require('./js-rpcapi');
 const config = require('./config');
-const {concat} = require("lodash");
 
 const Reward = require('./models/reward')();
 
@@ -104,7 +102,9 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
 
   let operations = [];
 
-  await async.forEachOfLimit(rewardsByAddress, 1, async ({amountPlexGross, rewardIds}, addressTo) => {
+  for (const addressTo of lodash.keys(rewardsByAddress)) {
+    const {amountPlexGross, rewardIds} = rewardsByAddress[addressTo]
+
     const commission = lodash.isNumber(config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[addressTo]) ?
       config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[addressTo] :
       bakerCommission;
@@ -132,7 +132,7 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
       await oneChunk(operations)
       operations = []
     }
-  });
+  }
 };
 
 module.exports = {
