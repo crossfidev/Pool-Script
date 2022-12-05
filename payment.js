@@ -18,7 +18,8 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
   const streamReward = Reward.find({
     from: bakerKeys.pkh,
     level: {$lte: lastLevel},
-    paymentOperationHash: null
+    paymentOperationHash: null,
+    amount: {$gt: 0}
   }).cursor();
 
   const rewardsByAddress = {};
@@ -48,7 +49,6 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
   const bakerCommission = lodash.isNumber(config.PAYMENT_SCRIPT.BAKERS_COMMISSIONS[bakerKeys.pkh]) ?
     config.PAYMENT_SCRIPT.BAKERS_COMMISSIONS[bakerKeys.pkh] :
     config.PAYMENT_SCRIPT.DEFAULT_BAKER_COMMISSION;
-
 
   const currentDate = new Date();
 
