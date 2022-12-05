@@ -4,6 +4,7 @@ const {mpapi} = require('./js-rpcapi');
 const config = require('./config');
 
 const Reward = require('./models/reward')();
+const RewardStats = require('./models/rewardStats')();
 
 const runPaymentScript = async ({bakerKeys, lastLevel}) => {
   console.log(`Start payment from ${bakerKeys.pkh}`);
@@ -15,32 +16,33 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
     return;
   }
 
-  const stream = Reward.find({
+  const streamReward = Reward.find({
     from: bakerKeys.pkh,
     level: {$lte: lastLevel},
     paymentOperationHash: null
   }).cursor();
 
-  const rewardsByAddress = {};
-
   let countLoadedDocs = 0;
 
-  for (let doc = await stream.next(); doc != null; doc = await stream.next()) {
+  for (let doc = await streamReward.next(); doc != null; doc = await streamReward.next()) {
     countLoadedDocs++;
 
     if (countLoadedDocs % 1000 === 0) {
       console.log('Loaded docs', countLoadedDocs);
     }
 
-    if (rewardsByAddress[doc.to]) {
-      rewardsByAddress[doc.to].amountPlexGross += doc.amount;
-      rewardsByAddress[doc.to].rewardIds.push(doc._id);
-    } else {
-      rewardsByAddress[doc.to] = {
+    await RewardStats.findOneAndUpdate({
+      addressTo: doc.to
+    }, {
+      $inc: {
         amountPlexGross: doc.amount,
-        rewardIds: [doc._id]
-      };
-    }
+      },
+      $push: {
+        rewardIds: doc._id
+      }
+    }, {
+      upsert: true
+    });
   }
 
   console.log('Total loaded docs', countLoadedDocs);
@@ -102,26 +104,27 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
 
   let operations = [];
 
-  for (const addressTo of lodash.keys(rewardsByAddress)) {
-    const {amountPlexGross, rewardIds} = rewardsByAddress[addressTo]
 
-    const commission = lodash.isNumber(config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[addressTo]) ?
-      config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[addressTo] :
+  const streamRewardStats = RewardStats.find({}).cursor();
+
+  for (let doc = await streamRewardStats.next(); doc != null; doc = await streamRewardStats.next()) {
+    const commission = lodash.isNumber(config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[doc.addressTo]) ?
+      config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[doc.addressTo] :
       bakerCommission;
 
-    let amountPlex = amountPlexGross * (1 - commission);
+    let amountPlex = doc.amountPlexGross * (1 - commission);
     if (amountPlex >= config.PAYMENT_SCRIPT.MIN_PAYMENT_AMOUNT) {
       const fee = 1;
       const gasLimit = 0.010307;
       const storageLimit = 0.000257;
       operations.push({
-        to: addressTo,
+        to: doc.addressTo,
         fee,
         gasLimit,
         storageLimit,
         amountPlex,
-        amountPlexGross,
-        rewardIds
+        amountPlexGross: doc.amountPlexGross,
+        rewardIds: doc.rewardIds
       });
     }
 
@@ -133,6 +136,8 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
       operations = []
     }
   }
+
+  await RewardStats.deleteMany({});
 };
 
 module.exports = {
