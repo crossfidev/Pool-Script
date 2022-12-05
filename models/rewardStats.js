@@ -1,5 +1,4 @@
 const mongoose = require('mongoose');
-const constants = require('../constants');
 const { Schema } = mongoose;
 
 const RewardStats = new Schema({
