@@ -19,7 +19,8 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
   const streamReward = Reward.find({
     from: bakerKeys.pkh,
     level: {$lte: lastLevel},
-    paymentOperationHash: null
+    paymentOperationHash: null,
+    amount: {$gt: 0}
   }).cursor();
 
   let countLoadedDocs = 0;
