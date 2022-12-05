@@ -24,6 +24,8 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
 
   let countLoadedDocs = 0;
 
+  const addresses = []
+
   for (let doc = await streamReward.next(); doc != null; doc = await streamReward.next()) {
     countLoadedDocs++;
 
@@ -31,18 +33,28 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
       console.log('Loaded docs', countLoadedDocs);
     }
 
-    await RewardStats.findOneAndUpdate({
-      addressTo: doc.to
-    }, {
-      $inc: {
+    if (lodash.includes(addresses, doc.to)) {
+      await RewardStats.updateOne({
+        addressTo: doc.to
+      }, {
+        $inc: {
+          amountPlexGross: doc.amount,
+        },
+        $push: {
+          rewardIds: doc._id
+        }
+      });
+    } else {
+      addresses.push(doc.to)
+
+      const rewardStats = new RewardStats({
+        addressTo: doc.to,
         amountPlexGross: doc.amount,
-      },
-      $push: {
-        rewardIds: doc._id
-      }
-    }, {
-      upsert: true
-    });
+        rewardIds: [doc._id]
+      })
+
+      await rewardStats.save()
+    }
   }
 
   console.log('Total loaded docs', countLoadedDocs);
