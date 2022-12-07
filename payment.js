@@ -105,20 +105,14 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
     }
   }
 
-  let operations = [];
+  const operations = []
 
-  const operationsLimit = lodash.min([config.PAYMENT_SCRIPT.MAX_COUNT_OPERATIONS_IN_ONE_BLOCK, 199])
-
-  for (const {amountPlexGross, rewardIds, addressTo} of rewardsByAddress) {
-    console.log('Step 0');
+  lodash.each(rewardsByAddress, ({amountPlexGross, rewardIds, addressTo}) => {
     const commission = lodash.isNumber(config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[addressTo]) ?
       config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[addressTo] :
       bakerCommission;
-    console.log('Step 1');
 
     let amountPlex = amountPlexGross * (1 - commission);
-
-    console.log('Step 2');
 
     if (amountPlex >= config.PAYMENT_SCRIPT.MIN_PAYMENT_AMOUNT) {
       const fee = 1;
@@ -133,18 +127,13 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
         amountPlexGross,
         rewardIds
       });
-      console.log('Step 3');
     }
+  });
 
-    if (operations.length >= operationsLimit) {
-      console.log('Count operations', operations.length);
-      console.log('Total plex rewards:', lodash.sumBy(operations, 'amountPlex'));
+  const operationsLimit = lodash.min([config.PAYMENT_SCRIPT.MAX_COUNT_OPERATIONS_IN_ONE_BLOCK, 199])
 
-      await oneChunk(operations)
-
-      console.log('Step 4');
-      operations = []
-    }
+  for (const operationChunk of _.chunk(operations, operationsLimit)) {
+    await oneChunk(operationChunk)
   }
 };
 
