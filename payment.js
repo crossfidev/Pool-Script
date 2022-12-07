@@ -109,7 +109,8 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
 
   const operationsLimit = lodash.min([config.PAYMENT_SCRIPT.MAX_COUNT_OPERATIONS_IN_ONE_BLOCK, 199])
 
-  await async.eachLimit(rewardsByAddress, 1, async ({amountPlexGross, rewardIds, addressTo}) => {
+  for (const {amountPlexGross, rewardIds, addressTo} of rewardsByAddress) {
+    console.log('Step 0');
     const commission = lodash.isNumber(config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[addressTo]) ?
       config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[addressTo] :
       bakerCommission;
@@ -144,7 +145,7 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
       console.log('Step 4');
       operations = []
     }
-  })
+  }
 };
 
 module.exports = {
