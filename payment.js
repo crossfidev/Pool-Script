@@ -2,6 +2,7 @@ const lodash = require('lodash');
 
 const {mpapi} = require('./js-rpcapi');
 const config = require('./config');
+const async = require("async");
 
 const Reward = require('./models/reward')();
 
@@ -19,7 +20,7 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
     from: bakerKeys.pkh,
     level: {$lte: lastLevel},
     paymentOperationHash: null,
-    amount: {$gt: 0}
+    // amount: {$gt: 0}
   }).cursor();
 
   const rewardsByAddress = {};
@@ -102,14 +103,18 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
 
   let operations = [];
 
-  for (const addressTo of lodash.keys(rewardsByAddress)) {
-    const {amountPlexGross, rewardIds} = rewardsByAddress[addressTo]
+  const operationsLimit = lodash.min([config.PAYMENT_SCRIPT.MAX_COUNT_OPERATIONS_IN_ONE_BLOCK, 199])
 
+  await async.forEachOfLimit(rewardsByAddress, 1, async ({amountPlexGross, rewardIds}, addressTo) => {
     const commission = lodash.isNumber(config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[addressTo]) ?
       config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[addressTo] :
       bakerCommission;
+    console.log('Step 1');
 
     let amountPlex = amountPlexGross * (1 - commission);
+
+    console.log('Step 2');
+
     if (amountPlex >= config.PAYMENT_SCRIPT.MIN_PAYMENT_AMOUNT) {
       const fee = 1;
       const gasLimit = 0.010307;
@@ -123,16 +128,19 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
         amountPlexGross,
         rewardIds
       });
+      console.log('Step 3');
     }
 
-    if (operations.length >= lodash.min([config.PAYMENT_SCRIPT.MAX_COUNT_OPERATIONS_IN_ONE_BLOCK, 199])) {
+    if (operations.length >= operationsLimit) {
       console.log('Count operations', operations.length);
-      console.log('Total plex rewards:', operations.reduce((acc, operation) => acc + operation.amountPlex, 0));
+      console.log('Total plex rewards:', lodash.sumBy(operations, 'amountPlex'));
 
       await oneChunk(operations)
+
+      console.log('Step 4');
       operations = []
     }
-  }
+  })
 };
 
 module.exports = {
