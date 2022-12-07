@@ -21,7 +21,7 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
     from: bakerKeys.pkh,
     level: {$lte: lastLevel},
     paymentOperationHash: null,
-    // amount: {$gt: 0}
+    amount: {$gt: 0}
   }).cursor();
 
   const rewardsByAddress = [];
