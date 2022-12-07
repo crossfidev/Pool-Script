@@ -3,6 +3,7 @@ const lodash = require('lodash');
 const {mpapi} = require('./js-rpcapi');
 const config = require('./config');
 const async = require("async");
+const _ = require("lodash");
 
 const Reward = require('./models/reward')();
 
@@ -23,7 +24,7 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
     // amount: {$gt: 0}
   }).cursor();
 
-  const rewardsByAddress = {};
+  const rewardsByAddress = [];
 
   let countLoadedDocs = 0;
 
@@ -34,14 +35,17 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
       console.log('Loaded docs', countLoadedDocs);
     }
 
-    if (rewardsByAddress[doc.to]) {
-      rewardsByAddress[doc.to].amountPlexGross += doc.amount;
-      rewardsByAddress[doc.to].rewardIds.push(doc._id);
+    const item = _.find(rewardsByAddress, {addressTo: doc.to})
+
+    if (item) {
+      item.amountPlexGross += doc.amount;
+      item.rewardIds.push(doc._id);
     } else {
-      rewardsByAddress[doc.to] = {
+      rewardsByAddress.push({
+        addressTo: doc.to,
         amountPlexGross: doc.amount,
         rewardIds: [doc._id]
-      };
+      });
     }
   }
 
@@ -105,7 +109,7 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
 
   const operationsLimit = lodash.min([config.PAYMENT_SCRIPT.MAX_COUNT_OPERATIONS_IN_ONE_BLOCK, 199])
 
-  await async.forEachOfLimit(rewardsByAddress, 1, async ({amountPlexGross, rewardIds}, addressTo) => {
+  await async.eachLimit(rewardsByAddress, 1, async ({amountPlexGross, rewardIds, addressTo}) => {
     const commission = lodash.isNumber(config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[addressTo]) ?
       config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[addressTo] :
       bakerCommission;
