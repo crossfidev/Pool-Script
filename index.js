@@ -268,7 +268,7 @@ const saveRewards = async (bakerAddress, rewards) => {
     rewards,
     10,
     async (reward) => {
-      return await Reward.updateOne({
+       await Reward.updateOne({
         from: bakerAddress,
         to: reward.address,
         level: reward.metadata.level,

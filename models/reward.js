@@ -23,6 +23,7 @@ const Reward = new Schema({
   amount: {
     type: Number,
     required: true,
+    index: true,
   },
   type: {
     type: String,
@@ -34,7 +35,8 @@ const Reward = new Schema({
     type: String,
     trim: true,
     index: true,
-  }
+  },
+  metadata: Object
 }, {
   timestamps: true,
   autoIndex: true

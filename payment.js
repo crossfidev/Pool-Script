@@ -2,7 +2,6 @@ const lodash = require('lodash');
 
 const {mpapi} = require('./js-rpcapi');
 const config = require('./config');
-const async = require("async");
 const _ = require("lodash");
 
 const Reward = require('./models/reward')();
