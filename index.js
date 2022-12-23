@@ -269,44 +269,46 @@ const saveRewards = async (bakerAddress, rewards) => {
   const updateDataRewardState = []
 
   for (const reward of rewards) {
-    updateDataReward.push({
-      updateOne: {
-        filter: {
-          from: bakerAddress,
-          to: reward.address,
-          level: reward.metadata.level,
-          type: reward.type
-        },
-        update: {
-          $set: {
+    if (reward.reward > 0) {
+      updateDataReward.push({
+        updateOne: {
+          filter: {
             from: bakerAddress,
             to: reward.address,
-            amount: reward.reward,
             level: reward.metadata.level,
-            type: reward.type,
-            metadata: reward.metadata
-          }
-        },
-        upsert: true
-      }
-    });
+            type: reward.type
+          },
+          update: {
+            $set: {
+              from: bakerAddress,
+              to: reward.address,
+              amount: reward.reward,
+              level: reward.metadata.level,
+              type: reward.type,
+              metadata: reward.metadata
+            }
+          },
+          upsert: true
+        }
+      });
 
-    updateDataRewardState.push({
-      updateOne: {
-        filter: {
-          from: bakerAddress,
-          to: reward.address,
-          cycle: reward.metadata.cycle,
-          type: reward.type
-        },
-        update: {
-          $inc: {
-            amount: reward.reward,
-          }
-        },
-        upsert: true
-      }
-    })
+      updateDataRewardState.push({
+        updateOne: {
+          filter: {
+            from: bakerAddress,
+            to: reward.address,
+            cycle: reward.metadata.cycle,
+            type: reward.type
+          },
+          update: {
+            $inc: {
+              amount: reward.reward,
+            }
+          },
+          upsert: true
+        }
+      })
+    }
   }
 
   await Reward.bulkWrite(updateDataReward)
