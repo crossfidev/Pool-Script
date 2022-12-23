@@ -265,48 +265,52 @@ const getRewardsForEndorser = async (block, endorserAddress, slots) => {
 }
 
 const saveRewards = async (bakerAddress, rewards) => {
-  await async.mapLimit(
-    rewards,
-    10,
-    async (reward) => {
-      await Reward.updateOne({
-        from: bakerAddress,
-        to: reward.address,
-        level: reward.metadata.level,
-        type: reward.type
-      }, {
-        $set: {
+  const updateDataReward = []
+  const updateDataRewardState = []
+
+  for (const reward of rewards) {
+    updateDataReward.push({
+      updateOne: {
+        filter: {
           from: bakerAddress,
           to: reward.address,
-          amount: reward.reward,
           level: reward.metadata.level,
-          type: reward.type,
-          metadata: reward.metadata
-        }
-      }, {
+          type: reward.type
+        },
+        update: {
+          $set: {
+            from: bakerAddress,
+            to: reward.address,
+            amount: reward.reward,
+            level: reward.metadata.level,
+            type: reward.type,
+            metadata: reward.metadata
+          }
+        },
         upsert: true
-      });
-    }
-  )
+      }
+    });
 
-  await async.mapLimit(
-    rewards,
-    10,
-    async (reward) => {
-      await RewardState.updateOne({
-        from: bakerAddress,
-        to: reward.address,
-        cycle: reward.metadata.cycle,
-        type: reward.type
-      }, {
-        $inc: {
-          amount: reward.reward,
-        }
-      }, {
+    updateDataRewardState.push({
+      updateOne: {
+        filter: {
+          from: bakerAddress,
+          to: reward.address,
+          cycle: reward.metadata.cycle,
+          type: reward.type
+        },
+        update: {
+          $inc: {
+            amount: reward.reward,
+          }
+        },
         upsert: true
-      });
-    }
-  )
+      }
+    })
+  }
+
+  await Reward.bulkWrite(updateDataReward)
+  await RewardState.bulkWrite(updateDataRewardState)
 }
 
 const handleBlock = async (block, nextBlock) => {
@@ -316,14 +320,22 @@ const handleBlock = async (block, nextBlock) => {
   if (isInBakerList(baker)) {
     const rewards = await getRewardsForBaker(block, baker, blockEndorsers);
     console.log(`Found ${rewards.length} rewards for baking ${baker}`);
+
+    let startTime = new Date().getTime();
+    console.log(`Start save rewards. Run time: ${startTime}`);
     await saveRewards(baker, rewards);
+    console.log(`End save rewards. Run time: ${new Date().getTime() - startTime}`);
   }
 
   await async.eachLimit(blockEndorsers, 1, async (endorser) => {
     if (isInBakerList(endorser.address)) {
       const rewards = await getRewardsForEndorser(block, endorser.address, endorser.slots);
       console.log(`Found ${rewards.length} rewards for endorsing ${endorser.address}`);
+
+      let startTime = new Date().getTime();
+      console.log(`Start save rewards. Run time: ${startTime}`);
       await saveRewards(endorser.address, rewards);
+      console.log(`End save rewards. Run time: ${new Date().getTime() - startTime}`);
     }
   });
 }

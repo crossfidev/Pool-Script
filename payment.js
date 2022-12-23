@@ -4,60 +4,64 @@ const {mpapi} = require('./js-rpcapi');
 const config = require('./config');
 const _ = require("lodash");
 
-const Reward = require('./models/reward')();
+const RewardState = require('./models/rewardState')();
 
-const runPaymentScript = async ({bakerKeys, lastLevel}) => {
+const runPaymentScript = async ({bakerKeys, cycle}) => {
   console.log(`Start payment from ${bakerKeys.pkh}`);
   const Operation = require('./models/operation')(bakerKeys.pkh);
 
-  console.log('Rewarding period is up to ', lastLevel);
-  if (!lastLevel) {
+  console.log('Rewarding period is up to ', cycle);
+  if (!cycle) {
     console.log('Cant load last block');
     return;
   }
 
-  const streamReward = Reward.find({
+  const streamRewardState = RewardState.find({
     from: bakerKeys.pkh,
-    level: {$lte: lastLevel},
+    cycle: {$lte: cycle},
     paymentOperationHash: null,
     amount: {$gt: 0}
   }).cursor();
 
-  const rewardsByAddress = [];
-
   let countLoadedDocs = 0;
 
-  for (let doc = await streamReward.next(); doc != null; doc = await streamReward.next()) {
-    countLoadedDocs++;
-
-    if (countLoadedDocs % 1000 === 0) {
-      console.log('Loaded docs', countLoadedDocs);
-    }
-
-    if (countLoadedDocs > 5000000) {
-      break;
-    }
-
-    const item = _.find(rewardsByAddress, {addressTo: doc.to})
-
-    if (item) {
-      item.amountPlexGross += doc.amount;
-      item.rewardIds.push(doc._id);
-    } else {
-      rewardsByAddress.push({
-        addressTo: doc.to,
-        amountPlexGross: doc.amount,
-        rewardIds: [doc._id]
-      });
-    }
-  }
-
-  console.log('Total loaded docs', countLoadedDocs);
+  const operations = []
 
   const bakerCommission = lodash.isNumber(config.PAYMENT_SCRIPT.BAKERS_COMMISSIONS[bakerKeys.pkh]) ?
     config.PAYMENT_SCRIPT.BAKERS_COMMISSIONS[bakerKeys.pkh] :
     config.PAYMENT_SCRIPT.DEFAULT_BAKER_COMMISSION;
 
+
+  for (let doc = await streamRewardState.next(); doc != null; doc = await streamRewardState.next()) {
+    countLoadedDocs++;
+
+    if (countLoadedDocs % 10 === 0) {
+      console.log('Loaded docs', countLoadedDocs);
+    }
+
+    const commission = lodash.isNumber(config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[doc.to]) ?
+      config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[doc.to] :
+      bakerCommission;
+
+    let amountPlex = doc.amount * (1 - commission);
+
+    if (amountPlex >= config.PAYMENT_SCRIPT.MIN_PAYMENT_AMOUNT) {
+      const fee = 1;
+      const gasLimit = 0.010307;
+      const storageLimit = 0.000257;
+      operations.push({
+        to: doc.to,
+        fee,
+        gasLimit,
+        storageLimit,
+        amountPlex,
+        amountPlexGross: doc.amount,
+        rewardId: doc._id
+      });
+    }
+  }
+
+  console.log('Total loaded docs', countLoadedDocs);
   const currentDate = new Date();
 
   const oneChunk = async (operations) => {
@@ -83,8 +87,8 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
       const hash = await sendOperations(operations);
 
       console.log('Operation hash', hash);
-      console.log('Updated rewards with hash', await Reward.updateMany({
-        _id: {$in: lodash.flatMapDeep(operations, 'rewardIds')}
+      console.log('Updated rewards with hash', await RewardState.updateMany({
+        _id: {$in: lodash.map(operations, 'rewardId')}
       }, {
         $set: {
           paymentOperationHash: hash
@@ -104,36 +108,12 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
       console.log('Block hash:', blockHash)
     } catch (error) {
       console.log('Error', error);
+      await new Promise(rs => setTimeout(rs, 60 * 1000))
       return;
     }
   }
 
-  const operations = []
-
-  lodash.each(rewardsByAddress, ({amountPlexGross, rewardIds, addressTo}) => {
-    const commission = lodash.isNumber(config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[addressTo]) ?
-      config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[addressTo] :
-      bakerCommission;
-
-    let amountPlex = amountPlexGross * (1 - commission);
-
-    if (amountPlex >= config.PAYMENT_SCRIPT.MIN_PAYMENT_AMOUNT) {
-      const fee = 1;
-      const gasLimit = 0.010307;
-      const storageLimit = 0.000257;
-      operations.push({
-        to: addressTo,
-        fee,
-        gasLimit,
-        storageLimit,
-        amountPlex,
-        amountPlexGross,
-        rewardIds
-      });
-    }
-  });
-
-  const operationsLimit = lodash.min([config.PAYMENT_SCRIPT.MAX_COUNT_OPERATIONS_IN_ONE_BLOCK, 199])
+  const operationsLimit = lodash.min([config.PAYMENT_SCRIPT.MAX_COUNT_OPERATIONS_IN_ONE_BLOCK, 75])
 
   for (const operationChunk of _.chunk(operations, operationsLimit)) {
     await oneChunk(operationChunk)
