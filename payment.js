@@ -113,7 +113,7 @@ const runPaymentScript = async ({bakerKeys, cycle}) => {
     }
   }
 
-  const operationsLimit = lodash.min([config.PAYMENT_SCRIPT.MAX_COUNT_OPERATIONS_IN_ONE_BLOCK, 75])
+  const operationsLimit = lodash.min([config.PAYMENT_SCRIPT.MAX_COUNT_OPERATIONS_IN_ONE_BLOCK, 199])
 
   for (const operationChunk of _.chunk(operations, operationsLimit)) {
     await oneChunk(operationChunk)
