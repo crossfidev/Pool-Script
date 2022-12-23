@@ -34,6 +34,10 @@ const runPaymentScript = async ({bakerKeys, lastLevel}) => {
       console.log('Loaded docs', countLoadedDocs);
     }
 
+    if (countLoadedDocs > 5000000) {
+      break;
+    }
+
     const item = _.find(rewardsByAddress, {addressTo: doc.to})
 
     if (item) {

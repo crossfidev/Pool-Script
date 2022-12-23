@@ -3,7 +3,7 @@ const lodash = require('lodash');
 const cache = require('memory-cache');
 const async = require('async');
 
-const { mpapi } = require('./js-rpcapi');
+const {mpapi} = require('./js-rpcapi');
 const payment = require('./payment');
 const config = require('./config');
 const constants = require('./constants');
@@ -11,6 +11,7 @@ const constants = require('./constants');
 const Settings = require('./models/settings')();
 const BakerCycle = require('./models/bakerCycle')();
 const Reward = require('./models/reward')();
+const RewardState = require('./models/rewardState')();
 
 mpapi.node.setProvider(config.NODE_RPC);
 mpapi.node.setDebugMode(false);
@@ -78,8 +79,7 @@ const getBlockEndorsers = (operations) => {
     return operations.filter(operation => {
       if (Array.isArray(operation)) {
         return findEndorsers(operation).length > 0 ? true : false;
-      }
-      else {
+      } else {
         if (operation.contents)
           return findEndorsers(operation.contents).length > 0 ? true : false;
         else {
@@ -152,7 +152,7 @@ const getBakerCycle = async (baker, cycle) => {
       }
     }
 
-    const { levelDelegatorsBalances, fullStakingBalance, ownBalance, delegatedBalance } = await gettingData(0);
+    const {levelDelegatorsBalances, fullStakingBalance, ownBalance, delegatedBalance} = await gettingData(0);
 
     if (level == cycleInfo.first) {
       minDelegatorsBalances = levelDelegatorsBalances;
@@ -174,7 +174,7 @@ const getBakerCycle = async (baker, cycle) => {
     if (stableLevelDelegators.length !== minDelegatorsBalances.length) {
       minDelegatorsBalances = lodash.intersectionBy(minDelegatorsBalances, stableLevelDelegators, 'address');
     }
-    
+
     minDelegatorsBalances = lodash.zipWith(stableLevelDelegators, minDelegatorsBalances, (levelDelegator, cycleDelegator) => {
       return {
         address: levelDelegator.address,
@@ -204,11 +204,11 @@ const getBakerCycle = async (baker, cycle) => {
   });
 }
 
-const getRewards = async (block, type = constants.REWARD_TYPES.FOR_BAKING, baker, { endorsers = [], slots = 0 }) => {
+const getRewards = async (block, type = constants.REWARD_TYPES.FOR_BAKING, baker, {endorsers = [], slots = 0}) => {
   const level = block.metadata.level.level;
   const cycle = block.metadata.level.cycle;
   const priority = block.header.priority;
-  const { baking_reward_per_endorsement, endorsement_reward } = await getBlockConstants(level);
+  const {baking_reward_per_endorsement, endorsement_reward} = await getBlockConstants(level);
 
   const bakerCycle = await getBakerCycle(baker, cycle - PRESERVES_CYCLE);
   if (!bakerCycle) {
@@ -224,7 +224,7 @@ const getRewards = async (block, type = constants.REWARD_TYPES.FOR_BAKING, baker
       else
         totalReward = baking_reward_per_endorsement[1] * countEndorsers;
       break;
-    case constants.REWARD_TYPES.FOR_ENDORSING: 
+    case constants.REWARD_TYPES.FOR_ENDORSING:
       if (priority === 0)
         totalReward = endorsement_reward[0] * slots;
       else
@@ -240,6 +240,7 @@ const getRewards = async (block, type = constants.REWARD_TYPES.FOR_BAKING, baker
       reward: lodash.floor(totalReward / bakerCycle.minFullStakingBalance * delegator.minDelegatedBalance, 7),
       type,
       metadata: {
+        cycle,
         priority,
         level,
         totalReward,
@@ -252,15 +253,15 @@ const getRewards = async (block, type = constants.REWARD_TYPES.FOR_BAKING, baker
     }));
   }
 
-  return rewardOfAddresses;    
+  return rewardOfAddresses;
 }
 
 const getRewardsForBaker = async (block, bakerAddress, endorsers) => {
-  return await getRewards(block, constants.REWARD_TYPES.FOR_BAKING, bakerAddress, { endorsers });
+  return await getRewards(block, constants.REWARD_TYPES.FOR_BAKING, bakerAddress, {endorsers});
 }
 
 const getRewardsForEndorser = async (block, endorserAddress, slots) => {
-  return await getRewards(block, constants.REWARD_TYPES.FOR_ENDORSING, endorserAddress, { slots });
+  return await getRewards(block, constants.REWARD_TYPES.FOR_ENDORSING, endorserAddress, {slots});
 }
 
 const saveRewards = async (bakerAddress, rewards) => {
@@ -268,7 +269,7 @@ const saveRewards = async (bakerAddress, rewards) => {
     rewards,
     10,
     async (reward) => {
-       await Reward.updateOne({
+      await Reward.updateOne({
         from: bakerAddress,
         to: reward.address,
         level: reward.metadata.level,
@@ -287,6 +288,25 @@ const saveRewards = async (bakerAddress, rewards) => {
       });
     }
   )
+
+  await async.mapLimit(
+    rewards,
+    10,
+    async (reward) => {
+      await RewardState.updateOne({
+        from: bakerAddress,
+        to: reward.address,
+        cycle: reward.metadata.cycle,
+        type: reward.type
+      }, {
+        $inc: {
+          amount: reward.reward,
+        }
+      }, {
+        upsert: true
+      });
+    }
+  )
 }
 
 const handleBlock = async (block, nextBlock) => {
@@ -294,9 +314,9 @@ const handleBlock = async (block, nextBlock) => {
   const blockEndorsers = getBlockEndorsers(nextBlock.operations);
 
   if (isInBakerList(baker)) {
-      const rewards = await getRewardsForBaker(block, baker, blockEndorsers);
-      console.log(`Found ${rewards.length} rewards for baking ${baker}`);
-      await saveRewards(baker, rewards);
+    const rewards = await getRewardsForBaker(block, baker, blockEndorsers);
+    console.log(`Found ${rewards.length} rewards for baking ${baker}`);
+    await saveRewards(baker, rewards);
   }
 
   await async.eachLimit(blockEndorsers, 1, async (endorser) => {
@@ -308,11 +328,15 @@ const handleBlock = async (block, nextBlock) => {
   });
 }
 
-mongoose.connect(config.MONGO_URL, { useNewUrlParser: true, useUnifiedTopology: true, useFindAndModify: false }, async (error) => {
+mongoose.connect(config.MONGO_URL, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+  useFindAndModify: false
+}, async (error) => {
   if (error) throw error;
 
   const startIndex = async () => {
-    const { lastIndexedLevel } = await Settings.findOne() || {};
+    const {lastIndexedLevel} = await Settings.findOne() || {};
     const head = await getBlock();
 
     let level = lodash.max([
@@ -320,7 +344,7 @@ mongoose.connect(config.MONGO_URL, { useNewUrlParser: true, useUnifiedTopology: 
       config.START_INDEXING_LEVEL,
       BLOCKS_IN_CYCLE * PRESERVES_CYCLE,
     ]);
-    
+
     console.log('Starting from', level)
     while (true) {
       // There must be at least one block ahead.
@@ -333,7 +357,7 @@ mongoose.connect(config.MONGO_URL, { useNewUrlParser: true, useUnifiedTopology: 
         const block = await getBlock(level);
         const nextBlock = await getBlock(level + 1);
         const cycleInfo = await getCycleInfo(block.metadata.level.cycle);
-        console.log(`Current level is ${level}, block hash is ${block.hash}`);    
+        console.log(`Current level is ${level}, block hash is ${block.hash}`);
         let startTime = new Date().getTime();
         await handleBlock(block, nextBlock);
         const endTime = new Date().getTime();
@@ -349,16 +373,18 @@ mongoose.connect(config.MONGO_URL, { useNewUrlParser: true, useUnifiedTopology: 
         console.log(`Start cleaning old cycles lower than: ${level - BLOCKS_IN_CYCLE * 60}`);
         startTime = new Date().getTime();
         await Reward.deleteMany({
-          level: { $lt: level - BLOCKS_IN_CYCLE * 60 },
+          level: {$lt: level - BLOCKS_IN_CYCLE * 60},
+        });
+        await RewardState.deleteMany({
+          cycle: {$lt: block.metadata.level.cycle - 60},
         });
         console.log(`End cleaning old cycles. Run time: ${new Date().getTime() - startTime}`);
 
         if (config.PAYMENT_SCRIPT.ENABLED_AUTOPAYMENT) {
           if (level === cycleInfo.first + lodash.max([5, config.PAYMENT_SCRIPT.AUTOPAYMENT_LEVEL])) {
-            const previousCycleInfo = await getCycleInfo(block.metadata.level.cycle - 1);
             await async.eachLimit(config.PAYMENT_SCRIPT.BAKER_PRIVATE_KEYS, 1, async (privateKey) => {
               const bakerKeys = mpapi.crypto.extractKeys(privateKey);
-              await payment.runPaymentScript({ bakerKeys, lastLevel: previousCycleInfo.last });
+              await payment.runPaymentScript({bakerKeys, cycle: block.metadata.level.cycle - 1});
             });
           }
         }
