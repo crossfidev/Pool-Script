@@ -1,18 +1,35 @@
 const lodash = require('lodash');
-
+const {workerData,} = require('node:worker_threads')
 const {mpapi} = require('./js-rpcapi');
 const config = require('./config');
 const _ = require("lodash");
-
+const mongoose = require("mongoose");
 const RewardState = require('./models/rewardState')();
 
-const runPaymentScript = async ({bakerKeys, cycle}) => {
-  console.log(`Start payment from ${bakerKeys.pkh}`);
+if (!workerData) {
+  return;
+}
+
+mpapi.node.setProvider(config.NODE_RPC);
+mpapi.node.setDebugMode(false);
+
+const {bakerKeys, cycle} = workerData
+
+mongoose.connect(config.MONGO_URL, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+  useFindAndModify: false
+}, async (error) => {
+  if (error) throw error;
+  const logger = (...args) => console.log(`${bakerKeys.pkh} => `, ...args);
+
+  logger('Start payment');
+
   const Operation = require('./models/operation')(bakerKeys.pkh);
 
-  console.log('Rewarding period is up to ', cycle);
+  logger('Rewarding period is up to ', cycle);
   if (!cycle) {
-    console.log('Cant load last block');
+    logger('Cant load last block');
     return;
   }
 
@@ -31,12 +48,11 @@ const runPaymentScript = async ({bakerKeys, cycle}) => {
     config.PAYMENT_SCRIPT.BAKERS_COMMISSIONS[bakerKeys.pkh] :
     config.PAYMENT_SCRIPT.DEFAULT_BAKER_COMMISSION;
 
-
   for (let doc = await streamRewardState.next(); doc != null; doc = await streamRewardState.next()) {
     countLoadedDocs++;
 
-    if (countLoadedDocs % 10 === 0) {
-      console.log('Loaded docs', countLoadedDocs);
+    if (countLoadedDocs % 1000 === 0) {
+      logger('Loaded docs', countLoadedDocs);
     }
 
     const commission = lodash.isNumber(config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[doc.to]) ?
@@ -49,46 +65,54 @@ const runPaymentScript = async ({bakerKeys, cycle}) => {
       const fee = 1;
       const gasLimit = 0.010307;
       const storageLimit = 0.000257;
-      operations.push({
-        to: doc.to,
-        fee,
-        gasLimit,
-        storageLimit,
-        amountPlex,
-        amountPlexGross: doc.amount,
-        rewardId: doc._id
-      });
+
+      const existsOperation = lodash.find(operations, {to: doc.to})
+
+      if (existsOperation) {
+        existsOperation.amountPlex += amountPlex
+        existsOperation.rewardIds.push(doc._id)
+      } else {
+        operations.push({
+          to: doc.to,
+          fee,
+          gasLimit,
+          storageLimit,
+          amountPlex,
+          amountPlexGross: doc.amount,
+          rewardIds: [doc._id]
+        });
+      }
     }
   }
 
-  console.log('Total loaded docs', countLoadedDocs);
+  logger('Total loaded docs', countLoadedDocs);
   const currentDate = new Date();
 
   const oneChunk = async (operations) => {
-    try {
-      const sendOperations = async (operations) => {
-        try {
-          console.log('Try to send operations');
-          const {hash = `${bakerKeys.pkh}-${currentDate}`} = await mpapi.rpc.sendOperation(bakerKeys.pkh, operations.map(operation => ({
-            "kind": "transaction",
-            "fee": mpapi.utility.mutez(operation.fee).toString(),
-            "gas_limit": mpapi.utility.mutez(operation.gasLimit).toString(),
-            "storage_limit": mpapi.utility.mutez(operation.storageLimit).toString(),
-            "amount": mpapi.utility.mutez(operation.amountPlex).toString(),
-            "destination": operation.to
-          })), bakerKeys);
-
-          return hash;
-        } catch (error) {
-          console.log('RPC Error:', error);
-          return await sendOperations(operations);
-        }
+    const sendOperations = async (operations) => {
+      try {
+        logger('Try to send operations');
+        const {hash = `${bakerKeys.pkh}-${currentDate}`} = await mpapi.rpc.sendOperation(bakerKeys.pkh, operations.map(operation => ({
+          "kind": "transaction",
+          "fee": mpapi.utility.mutez(operation.fee).toString(),
+          "gas_limit": mpapi.utility.mutez(operation.gasLimit).toString(),
+          "storage_limit": mpapi.utility.mutez(operation.storageLimit).toString(),
+          "amount": mpapi.utility.mutez(operation.amountPlex).toString(),
+          "destination": operation.to
+        })), bakerKeys);
+        logger(`Hash operation => ${hash}`)
+        return await mpapi.rpc.awaitOperation(hash, 10 * 1000, 61 * 60 * 1000);
+      } catch (error) {
+        logger('RPC Error:', error);
+        return await sendOperations(operations);
       }
+    }
+    try {
       const hash = await sendOperations(operations);
 
-      console.log('Operation hash', hash);
-      console.log('Updated rewards with hash', await RewardState.updateMany({
-        _id: {$in: lodash.map(operations, 'rewardId')}
+      logger('Operation hash', hash);
+      logger('Updated rewards with hash', await RewardState.updateMany({
+        _id: {$in: lodash.flatMap(operations, 'rewardIds')}
       }, {
         $set: {
           paymentOperationHash: hash
@@ -104,10 +128,9 @@ const runPaymentScript = async ({bakerKeys, cycle}) => {
         fee: operation.fee,
       })));
 
-      const blockHash = await mpapi.rpc.awaitOperation(hash, 10 * 1000, 61 * 60 * 1000);
-      console.log('Block hash:', blockHash)
+      logger('Block hash:', hash)
     } catch (error) {
-      console.log('Error', error);
+      logger('Error', error);
       await new Promise(rs => setTimeout(rs, 60 * 1000))
       return;
     }
@@ -118,8 +141,8 @@ const runPaymentScript = async ({bakerKeys, cycle}) => {
   for (const operationChunk of _.chunk(operations, operationsLimit)) {
     await oneChunk(operationChunk)
   }
-};
 
-module.exports = {
-  runPaymentScript
-}
+  await mongoose.disconnect()
+
+  process.exit(0)
+});

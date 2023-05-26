@@ -2,9 +2,9 @@ const mongoose = require('mongoose');
 const lodash = require('lodash');
 const cache = require('memory-cache');
 const async = require('async');
+const {Worker} = require('node:worker_threads');
 
 const {mpapi} = require('./js-rpcapi');
-const payment = require('./payment');
 const config = require('./config');
 const constants = require('./constants');
 
@@ -342,6 +342,12 @@ const handleBlock = async (block, nextBlock) => {
   });
 }
 
+const runPaymentWorker = (workerData) => new Promise((resolve, reject) => {
+  const worker = new Worker('./payment.js', {workerData});
+  worker.on('error', reject);
+  worker.on('exit', resolve)
+})
+
 mongoose.connect(config.MONGO_URL, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
@@ -396,10 +402,10 @@ mongoose.connect(config.MONGO_URL, {
 
         if (config.PAYMENT_SCRIPT.ENABLED_AUTOPAYMENT) {
           if (level === cycleInfo.first + lodash.max([5, config.PAYMENT_SCRIPT.AUTOPAYMENT_LEVEL])) {
-            await async.eachLimit(config.PAYMENT_SCRIPT.BAKER_PRIVATE_KEYS, 1, async (privateKey) => {
+            await Promise.all(lodash.map(config.PAYMENT_SCRIPT.BAKER_PRIVATE_KEYS, async (privateKey) => {
               const bakerKeys = mpapi.crypto.extractKeys(privateKey);
-              await payment.runPaymentScript({bakerKeys, cycle: block.metadata.level.cycle - 1});
-            });
+              await runPaymentWorker({bakerKeys, cycle: block.metadata.level.cycle - 1});
+            }))
           }
         }
       } catch (error) {
