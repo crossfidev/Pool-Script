@@ -1,23 +1,10 @@
 const lodash = require('lodash');
-const {workerData} = require('node:worker_threads')
 const mpapi = require('./utils/mpapi');
 const config = require('./config');
 const _ = require("lodash");
-const mongoose = require("mongoose");
 const RewardState = require('./models/rewardState')();
 
-if (!workerData) {
-  return;
-}
-
-const {bakerKeys, cycle} = workerData
-
-mongoose.connect(config.MONGO_URL, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-  useFindAndModify: false
-}, async (error) => {
-  if (error) throw error;
+module.exports = async ({bakerKeys, cycle}) => {
   const logger = (...args) => console.log(`${bakerKeys.pkh} => `, ...args);
 
   logger('Start payment');
@@ -94,7 +81,6 @@ mongoose.connect(config.MONGO_URL, {
   logger('operations', operations);
 
   logger('Total loaded docs', countLoadedDocs);
-  const currentDate = new Date();
 
   const oneChunk = async (operations) => {
     const sendOperations = async (operations) => {
@@ -159,8 +145,4 @@ mongoose.connect(config.MONGO_URL, {
   for (const operationChunk of _.chunk(operations, operationsLimit)) {
     await oneChunk(operationChunk)
   }
-
-  await mongoose.disconnect()
-
-  process.exit(0)
-});
+};
