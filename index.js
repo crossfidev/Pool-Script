@@ -4,7 +4,7 @@ const cache = require('memory-cache');
 const async = require('async');
 const {Worker} = require('node:worker_threads');
 
-const {mpapi} = require('./js-rpcapi');
+const mpapi = require('./utils/mpapi');
 const config = require('./config');
 const constants = require('./constants');
 
@@ -12,9 +12,6 @@ const Settings = require('./models/settings')();
 const BakerCycle = require('./models/bakerCycle')();
 const Reward = require('./models/reward')();
 const RewardState = require('./models/rewardState')();
-
-mpapi.node.setProvider(config.NODE_RPC);
-mpapi.node.setDebugMode(false);
 
 const PRESERVES_CYCLE = 5 + 2;
 const BLOCKS_IN_CYCLE = 1440;
@@ -219,16 +216,20 @@ const getRewards = async (block, type = constants.REWARD_TYPES.FOR_BAKING, baker
   switch (type) {
     case constants.REWARD_TYPES.FOR_BAKING:
       const countEndorsers = endorsers.reduce((count, endorser) => count + endorser.slots, 0)
-      if (priority === 0)
-        totalReward = baking_reward_per_endorsement[0] * countEndorsers;
-      else
-        totalReward = baking_reward_per_endorsement[1] * countEndorsers;
+      if (baking_reward_per_endorsement) {
+        if (priority === 0)
+          totalReward = baking_reward_per_endorsement[0] * countEndorsers;
+        else
+          totalReward = baking_reward_per_endorsement[1] * countEndorsers;
+      }
       break;
     case constants.REWARD_TYPES.FOR_ENDORSING:
-      if (priority === 0)
-        totalReward = endorsement_reward[0] * slots;
-      else
-        totalReward = endorsement_reward[1] * slots;
+      if (endorsement_reward) {
+        if (priority === 0)
+          totalReward = endorsement_reward[0] * slots;
+        else
+          totalReward = endorsement_reward[1] * slots;
+      }
       break;
   }
   totalReward = mpapi.utility.totez(totalReward);
@@ -393,10 +394,10 @@ mongoose.connect(config.MONGO_URL, {
         console.log(`Start cleaning old cycles lower than: ${level - BLOCKS_IN_CYCLE * 60}`);
         startTime = new Date().getTime();
         await Reward.deleteMany({
-          level: {$lt: level - BLOCKS_IN_CYCLE * 60},
+          level: {$lt: level - BLOCKS_IN_CYCLE * 120},
         });
         await RewardState.deleteMany({
-          cycle: {$lt: block.metadata.level.cycle - 60},
+          cycle: {$lt: block.metadata.level.cycle - 120},
         });
         console.log(`End cleaning old cycles. Run time: ${new Date().getTime() - startTime}`);
 

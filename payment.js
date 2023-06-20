@@ -1,6 +1,6 @@
 const lodash = require('lodash');
-const {workerData,} = require('node:worker_threads')
-const {mpapi} = require('./js-rpcapi');
+const {workerData} = require('node:worker_threads')
+const mpapi = require('./utils/mpapi');
 const config = require('./config');
 const _ = require("lodash");
 const mongoose = require("mongoose");
@@ -9,9 +9,6 @@ const RewardState = require('./models/rewardState')();
 if (!workerData) {
   return;
 }
-
-mpapi.node.setProvider(config.NODE_RPC);
-mpapi.node.setDebugMode(false);
 
 const {bakerKeys, cycle} = workerData
 
@@ -33,12 +30,28 @@ mongoose.connect(config.MONGO_URL, {
     return;
   }
 
-  const streamRewardState = RewardState.find({
-    from: bakerKeys.pkh,
-    cycle: {$lte: cycle},
-    paymentOperationHash: null,
-    amount: {$gt: 0}
-  }).cursor();
+  const rewardStatesGroup = RewardState.aggregate([
+    {
+      $match: {
+        from: bakerKeys.pkh,
+        cycle: {$lte: cycle},
+        paymentOperationHash: null,
+        amount: {$gt: 0}
+      },
+    },
+    {
+      $group: {
+        _id: "$to",
+        amount: {
+          $sum: "$amount",
+        },
+        rewardIds: {
+          $push: '$_id'
+        }
+      },
+    }
+  ]).cursor()
+
 
   let countLoadedDocs = 0;
 
@@ -48,42 +61,37 @@ mongoose.connect(config.MONGO_URL, {
     config.PAYMENT_SCRIPT.BAKERS_COMMISSIONS[bakerKeys.pkh] :
     config.PAYMENT_SCRIPT.DEFAULT_BAKER_COMMISSION;
 
-  for (let doc = await streamRewardState.next(); doc != null; doc = await streamRewardState.next()) {
+  for await (const rewardState of rewardStatesGroup) {
     countLoadedDocs++;
 
-    if (countLoadedDocs % 1000 === 0) {
+    if (countLoadedDocs % 100 === 0) {
       logger('Loaded docs', countLoadedDocs);
     }
 
-    const commission = lodash.isNumber(config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[doc.to]) ?
-      config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[doc.to] :
+    const commission = lodash.isNumber(config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[rewardState._id]) ?
+      config.PAYMENT_SCRIPT.ADDRESSES_COMMISSIONS[rewardState._id] :
       bakerCommission;
 
-    let amountPlex = doc.amount * (1 - commission);
+    let amountPlex = rewardState.amount * (1 - commission);
 
     if (amountPlex >= config.PAYMENT_SCRIPT.MIN_PAYMENT_AMOUNT) {
       const fee = 1;
       const gasLimit = 0.010307;
       const storageLimit = 0.000257;
 
-      const existsOperation = lodash.find(operations, {to: doc.to})
-
-      if (existsOperation) {
-        existsOperation.amountPlex += amountPlex
-        existsOperation.rewardIds.push(doc._id)
-      } else {
-        operations.push({
-          to: doc.to,
-          fee,
-          gasLimit,
-          storageLimit,
-          amountPlex,
-          amountPlexGross: doc.amount,
-          rewardIds: [doc._id]
-        });
-      }
+      operations.push({
+        to: rewardState._id,
+        fee,
+        gasLimit,
+        storageLimit,
+        amountPlex,
+        amountPlexGross: rewardState.amount,
+        rewardIds: rewardState.rewardIds
+      });
     }
   }
+
+  logger('operations', operations);
 
   logger('Total loaded docs', countLoadedDocs);
   const currentDate = new Date();
@@ -92,7 +100,7 @@ mongoose.connect(config.MONGO_URL, {
     const sendOperations = async (operations) => {
       try {
         logger('Try to send operations');
-        const {hash = `${bakerKeys.pkh}-${currentDate}`} = await mpapi.rpc.sendOperation(bakerKeys.pkh, operations.map(operation => ({
+        const res = await mpapi.rpc.sendOperation(bakerKeys.pkh, operations.map(operation => ({
           "kind": "transaction",
           "fee": mpapi.utility.mutez(operation.fee).toString(),
           "gas_limit": mpapi.utility.mutez(operation.gasLimit).toString(),
@@ -100,11 +108,21 @@ mongoose.connect(config.MONGO_URL, {
           "amount": mpapi.utility.mutez(operation.amountPlex).toString(),
           "destination": operation.to
         })), bakerKeys);
-        logger(`Hash operation => ${hash}`)
-        return await mpapi.rpc.awaitOperation(hash, 10 * 1000, 61 * 60 * 1000);
+
+        if (!res.hash) {
+          throw new Error('Hash is undefined')
+        }
+
+        logger(`Hash operation => ${res.hash}`)
+
+        await mpapi.rpc.awaitOperation(res.hash, 10 * 1000, 61 * 60 * 1000);
+
+        return res.hash
       } catch (error) {
         logger('RPC Error:', error);
-        return await sendOperations(operations);
+        return new Promise(resolve => setTimeout(async () => {
+          resolve(await sendOperations(operations))
+        }, 1000 * 60));
       }
     }
     try {
